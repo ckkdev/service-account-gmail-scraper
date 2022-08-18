@@ -2,6 +2,7 @@
 import os
 import os.path
 from pathlib import Path
+from tkinter import E
 import dateutil.parser as parser
 
 # importing email module
@@ -11,6 +12,11 @@ from email.mime.text import MIMEText
 
 # Parent Directory path
 parent_dir = str(Path(os.getcwd())) + '\EMAILS'
+
+#import BS & B64
+import base64
+from bs4 import BeautifulSoup
+
 
 #importing gApi
 from googleapiclient import discovery
@@ -98,17 +104,22 @@ def AccountServiceScraper(email_users, account_scope, service_account_json):
 
                 plain_msg = None
                 html_msg = None
-                for part in payload['body']:
-                    if part[1] == 'plain':
-                        if plain_msg is None:
-                            plain_msg = part['body']
-                        else:
-                            plain_msg += '\n' + part['body']
-                    elif part[0] == 'html':
+                for part in payload['parts']:
+                    print(part['mimeType'])
+                    if part['mimeType'] == 'text/html':
                         if html_msg is None:
-                            html_msg = part['body']
-                        else:
-                            html_msg += '<br/>' + part['body']
+                            data = part['body']['data']
+                            data = base64.urlsafe_b64decode(data)
+                            body = BeautifulSoup(data, 'lxml', from_encoding='utf-8').body
+                            html_msg = str(body)
+                    elif part['mimeType'] == 'text/plain':
+                        if plain_msg is None:
+                            data = part['body']['data']
+                            data = base64.urlsafe_b64decode(data)
+                            body = data.decode('UTF-8')
+                            plain_msg = body
+                    else:
+                        plain_msg = 'Multipart'
 
                 #setting up email & duplicating headers + payload
                 msg = MIMEMultipart('alternative')
@@ -121,12 +132,8 @@ def AccountServiceScraper(email_users, account_scope, service_account_json):
 
                 if html_msg is not None:
                     body_content = MIMEText(html_msg, 'html')
-
-                elif plain_msg is not None:
-                    body_content = MIMEText(plain_msg, 'plain')
-
                 else:
-                    body_content = MIMEText('n/a', 'plain')
+                    body_content = MIMEText(plain_msg, 'plain')
 
                 msg.attach(body_content)
 
