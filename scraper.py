@@ -223,9 +223,8 @@ def AccountServiceScraper(email_users, account_scope, service_account_json):
                     body_content = MIMEText(plain_msg, 'plain')
 
                 msg.attach(body_content)
-
                 #creating .eml with email ID as the name
-                outfile_name = os.path.join(parent_dir, directory_path, subject+".eml")
+                outfile_name = os.path.join(parent_dir, directory_path, ref['id']+".eml")
                 print("Duplicated email " + ref['id'] + " into folder " + label['name'])
                 with open(outfile_name, 'w') as outfile:
                     gen = generator.Generator(outfile)
