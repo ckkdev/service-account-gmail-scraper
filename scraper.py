@@ -4,11 +4,14 @@ import os.path
 from pathlib import Path
 from tkinter import E
 import dateutil.parser as parser
+from typing import List
 
 # importing email module
 from email import generator
 from email.mime.multipart import MIMEMultipart
 from email.mime.text import MIMEText
+
+from attachment import Attachment
 
 # Parent Directory path
 parent_dir = str(Path(os.getcwd())) + '\EMAILS'
@@ -31,6 +34,83 @@ def AccountServiceScraper(email_users, account_scope, service_account_json):
 
         service = discovery.build('gmail', 'v1', credentials=delegated_credentials)
         user_path = os.path.join(parent_dir, email_user)
+        attachments = 'reference'
+        def evaluate_message_payload(
+            payload: dict,
+            user_id: str,
+            msg_id: str
+        ) ->List[dict]:
+            """
+            Recursively evaluates a message payload.
+            Args:
+                payload: The message payload object (response from Gmail API).
+                user_id: The current account address (default 'me').
+                msg_id: The id of the message.
+                attachments: Accepted values are 'ignore' which completely ignores
+                    all attachments, 'reference' which includes attachment
+                    information but does not download the data, and 'download' which
+                    downloads the attachment data to store locally. Default
+                    'reference'.
+            Returns:
+                A list of message parts.
+            Raises:
+                googleapiclient.errors.HttpError: There was an error executing the
+                    HTTP request.
+            """
+
+            if 'attachmentId' in payload['body']:  # if it's an attachment
+                if attachments == 'ignore':
+                    return []
+
+                att_id = payload['body']['attachmentId']
+                filename = payload['filename']
+                if not filename:
+                    filename = 'unknown'
+
+                obj = {
+                    'part_type': 'attachment',
+                    'filetype': payload['mimeType'],
+                    'filename': filename,
+                    'attachment_id': att_id,
+                    'data': None
+                }
+
+                if attachments == 'reference':
+                    return [obj]
+
+                else:  # attachments == 'download'
+                    if 'data' in payload['body']:
+                        data = payload['body']['data']
+                    else:
+                        res = service.users().messages().attachments().get(
+                            userId=user_id, messageId=msg_id, id=att_id
+                        ).execute()
+                        data = res['data']
+
+                    file_data = base64.urlsafe_b64decode(data)
+                    obj['data'] = file_data
+                    return [obj]
+
+            elif payload['mimeType'] == 'text/html':
+                data = payload['body']['data']
+                data = base64.urlsafe_b64decode(data)
+                body = BeautifulSoup(data, 'lxml', from_encoding='utf-8').body
+                return [{ 'part_type': 'html', 'body': str(body) }]
+
+            elif payload['mimeType'] == 'text/plain':
+                data = payload['body']['data']
+                data = base64.urlsafe_b64decode(data)
+                body = data.decode('UTF-8')
+                return [{ 'part_type': 'plain', 'body': body }]
+
+            elif payload['mimeType'].startswith('multipart'):
+                ret = []
+                if 'parts' in payload:
+                    for part in payload['parts']:
+                        ret.extend(evaluate_message_payload(part, user_id, msg_id))
+                return ret
+
+            return []
 
         #create parent folder for user@email.com
         try: 
@@ -104,23 +184,30 @@ def AccountServiceScraper(email_users, account_scope, service_account_json):
 
                 plain_msg = None
                 html_msg = None
-                for part in payload['parts']:
-                    print(part['mimeType'])
-                    if part['mimeType'] == 'text/html':
-                        if html_msg is None:
-                            data = part['body']['data']
-                            data = base64.urlsafe_b64decode(data)
-                            body = BeautifulSoup(data, 'lxml', from_encoding='utf-8').body
-                            html_msg = str(body)
-                    elif part['mimeType'] == 'text/plain':
-                        if plain_msg is None:
-                            data = part['body']['data']
-                            data = base64.urlsafe_b64decode(data)
-                            body = data.decode('UTF-8')
-                            plain_msg = body
-                    else:
-                        plain_msg = 'Multipart'
+                
+                parts = evaluate_message_payload(
+                    payload, email_user, ref['id']
+                )
 
+                plain_msg = None
+                html_msg = None
+                attms = []
+                for part in parts:
+                    if part['part_type'] == 'plain':
+                        if plain_msg is None:
+                            plain_msg = part['body']
+                        else:
+                            plain_msg += '\n' + part['body']
+                    elif part['part_type'] == 'html':
+                        if html_msg is None:
+                            html_msg = part['body']
+                        else:
+                            html_msg += '<br/>' + part['body']
+                    elif part['part_type'] == 'attachment':
+                        attm = Attachment(service, email_user, ref['id'],
+                                        part['attachment_id'], part['filename'],
+                                        part['filetype'], part['data'])
+                        attms.append(attm)
                 #setting up email & duplicating headers + payload
                 msg = MIMEMultipart('alternative')
                 msg.set_charset("utf-8")
@@ -138,8 +225,10 @@ def AccountServiceScraper(email_users, account_scope, service_account_json):
                 msg.attach(body_content)
 
                 #creating .eml with email ID as the name
-                outfile_name = os.path.join(parent_dir, directory_path, ref['id']+".eml")
+                outfile_name = os.path.join(parent_dir, directory_path, subject+".eml")
                 print("Duplicated email " + ref['id'] + " into folder " + label['name'])
                 with open(outfile_name, 'w') as outfile:
                     gen = generator.Generator(outfile)
                     gen.flatten(msg)
+
+
