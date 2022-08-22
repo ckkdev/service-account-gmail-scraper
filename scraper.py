@@ -78,7 +78,9 @@ def AccountServiceScraper(email_users, account_scope, service_account_json):
                 includeSpamTrash=True,
                 pageToken=page_token
                 ).execute()
-                message_refs.extend(response['messages'])
+                
+                if 'messages' in response:  # ensure request was successful
+                    message_refs.extend(response['messages'])
                 
             #loop through messages
             for ref in message_refs:
